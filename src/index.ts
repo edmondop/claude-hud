@@ -64,7 +64,7 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
       : null;
 
     const extraCmd = deps.parseExtraCmdArg();
-    const extraLabel = extraCmd ? await deps.runExtraCmd(extraCmd) : null;
+    const extraResult = extraCmd ? await deps.runExtraCmd(extraCmd) : null;
 
     const sessionDuration = formatSessionDuration(transcript.sessionStart, deps.now);
 
@@ -79,7 +79,8 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
       gitStatus,
       usageData,
       config,
-      extraLabel,
+      extraLabel: extraResult?.label ?? null,
+      extraLines: extraResult?.lines ?? [],
     };
 
     deps.render(ctx);

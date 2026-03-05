@@ -3,8 +3,10 @@ import { promisify } from 'node:util';
 
 const execAsync = promisify(exec);
 
-const MAX_BUFFER = 10 * 1024; // 10KB - plenty for a label
+const MAX_BUFFER = 10 * 1024;
 const MAX_LABEL_LENGTH = 50;
+const MAX_LINE_LENGTH = 200;
+const MAX_EXTRA_LINES = 10;
 const TIMEOUT_MS = 3000;
 
 const isDebug = process.env.DEBUG?.includes('claude-hud') ?? false;
@@ -15,8 +17,9 @@ function debug(message: string): void {
   }
 }
 
-export interface ExtraLabel {
-  label: string;
+export interface ExtraCmdResult {
+  label: string | null;
+  lines: string[];
 }
 
 /**
@@ -32,6 +35,30 @@ export function sanitize(input: string): string {
     .replace(/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\u206A-\u206F]/g, ''); // bidi
 }
 
+function truncate(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength - 1) + '…';
+}
+
+function sanitizeAndTruncate(text: string, maxLength: number): string {
+  return truncate(sanitize(text), maxLength);
+}
+
+function parseStringField(data: Record<string, unknown>, field: string): string | undefined {
+  const value = data[field];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function parseStringArray(data: Record<string, unknown>, field: string): string[] {
+  const value = data[field];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string');
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /**
  * Parse --extra-cmd argument from process.argv
  * Supports both: --extra-cmd "command" and --extra-cmd="command"
@@ -40,7 +67,6 @@ export function parseExtraCmdArg(argv: string[] = process.argv): string | null {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
 
-    // Handle --extra-cmd=value syntax
     if (arg.startsWith('--extra-cmd=')) {
       const value = arg.slice('--extra-cmd='.length);
       if (value === '') {
@@ -50,7 +76,6 @@ export function parseExtraCmdArg(argv: string[] = process.argv): string | null {
       return value;
     }
 
-    // Handle --extra-cmd value syntax
     if (arg === '--extra-cmd') {
       if (i + 1 >= argv.length) {
         debug('Warning: --extra-cmd specified but no value provided');
@@ -68,35 +93,47 @@ export function parseExtraCmdArg(argv: string[] = process.argv): string | null {
   return null;
 }
 
+function parseExtraCmdOutput(data: unknown): ExtraCmdResult | null {
+  if (!isPlainObject(data)) {
+    debug(`Command output is not an object: ${JSON.stringify(data)}`);
+    return null;
+  }
+
+  const rawLabel = parseStringField(data, 'label');
+  const rawLines = parseStringArray(data, 'lines');
+
+  if (rawLabel === undefined && rawLines.length === 0) {
+    debug(`Command output has neither 'label' nor 'lines': ${JSON.stringify(data)}`);
+    return null;
+  }
+
+  return {
+    label: rawLabel !== undefined ? sanitizeAndTruncate(rawLabel, MAX_LABEL_LENGTH) : null,
+    lines: rawLines
+      .map(line => sanitizeAndTruncate(line, MAX_LINE_LENGTH))
+      .slice(0, MAX_EXTRA_LINES),
+  };
+}
+
 /**
- * Execute a command and parse JSON output expecting { label: string }
- * Returns null on any error (timeout, parse failure, missing label)
+ * Execute a command and parse JSON output.
+ *
+ * Supports two response formats:
+ * - Legacy: { "label": "text" } — single inline label (max 50 chars)
+ * - Extended: { "lines": ["line1", "line2"] } — rendered as additional HUD lines
+ * - Both: { "label": "text", "lines": ["line1"] } — label inline + extra lines
  *
  * SECURITY NOTE: The cmd parameter is sourced exclusively from CLI arguments
  * (--extra-cmd) typed by the user. Since the user controls their own shell,
  * shell injection is not a concern here - it's intentional user input.
  */
-export async function runExtraCmd(cmd: string, timeout: number = TIMEOUT_MS): Promise<string | null> {
+export async function runExtraCmd(cmd: string, timeout: number = TIMEOUT_MS): Promise<ExtraCmdResult | null> {
   try {
     const { stdout } = await execAsync(cmd, {
       timeout,
       maxBuffer: MAX_BUFFER,
     });
-    const data: unknown = JSON.parse(stdout.trim());
-    if (
-      typeof data === 'object' &&
-      data !== null &&
-      'label' in data &&
-      typeof (data as ExtraLabel).label === 'string'
-    ) {
-      let label = sanitize((data as ExtraLabel).label);
-      if (label.length > MAX_LABEL_LENGTH) {
-        label = label.slice(0, MAX_LABEL_LENGTH - 1) + '…';
-      }
-      return label;
-    }
-    debug(`Command output missing 'label' field or invalid type: ${JSON.stringify(data)}`);
-    return null;
+    return parseExtraCmdOutput(JSON.parse(stdout.trim()));
   } catch (err) {
     if (err instanceof Error) {
       if (err.message.includes('TIMEOUT') || err.message.includes('killed')) {

@@ -35,6 +35,8 @@ function baseContext() {
     sessionDuration: '',
     gitStatus: null,
     usageData: null,
+    extraLabel: null,
+    extraLines: [],
     config: {
       lineLayout: 'compact',
       showSeparators: false,

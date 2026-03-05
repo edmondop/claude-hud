@@ -41,7 +41,7 @@ export async function main(overrides = {}) {
             ? await deps.getUsage()
             : null;
         const extraCmd = deps.parseExtraCmdArg();
-        const extraLabel = extraCmd ? await deps.runExtraCmd(extraCmd) : null;
+        const extraResult = extraCmd ? await deps.runExtraCmd(extraCmd) : null;
         const sessionDuration = formatSessionDuration(transcript.sessionStart, deps.now);
         const ctx = {
             stdin,
@@ -54,7 +54,8 @@ export async function main(overrides = {}) {
             gitStatus,
             usageData,
             config,
-            extraLabel,
+            extraLabel: extraResult?.label ?? null,
+            extraLines: extraResult?.lines ?? [],
         };
         deps.render(ctx);
     }

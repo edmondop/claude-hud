@@ -98,9 +98,19 @@ test('parseExtraCmdArg handles command with spaces and quotes', () => {
 // runExtraCmd() tests
 // ============================================================================
 
-test('runExtraCmd returns label from valid JSON output', async () => {
+test('runExtraCmd returns ExtraCmdResult with label from valid JSON', async () => {
   const result = await runExtraCmd('echo \'{"label": "test"}\'');
-  assert.equal(result, 'test');
+  assert.deepStrictEqual(result, { label: 'test', lines: [] });
+});
+
+test('runExtraCmd returns ExtraCmdResult with lines from valid JSON', async () => {
+  const result = await runExtraCmd('echo \'{"lines": ["line one", "line two"]}\'');
+  assert.deepStrictEqual(result, { label: null, lines: ['line one', 'line two'] });
+});
+
+test('runExtraCmd returns ExtraCmdResult with both label and lines', async () => {
+  const result = await runExtraCmd('echo \'{"label": "hi", "lines": ["detail"]}\'');
+  assert.deepStrictEqual(result, { label: 'hi', lines: ['detail'] });
 });
 
 test('runExtraCmd returns null for non-JSON output', async () => {
@@ -108,7 +118,7 @@ test('runExtraCmd returns null for non-JSON output', async () => {
   assert.equal(result, null);
 });
 
-test('runExtraCmd returns null for JSON without label field', async () => {
+test('runExtraCmd returns null for JSON without label or lines', async () => {
   const result = await runExtraCmd('echo \'{"other": "field"}\'');
   assert.equal(result, null);
 });
@@ -118,16 +128,33 @@ test('runExtraCmd returns null for JSON with non-string label', async () => {
   assert.equal(result, null);
 });
 
+test('runExtraCmd ignores non-string items in lines array', async () => {
+  const result = await runExtraCmd('echo \'{"lines": ["valid", 123, null, "also valid"]}\'');
+  assert.deepStrictEqual(result, { label: null, lines: ['valid', 'also valid'] });
+});
+
 test('runExtraCmd truncates long labels with ellipsis', async () => {
   const longLabel = 'a'.repeat(60);
   const result = await runExtraCmd(`echo '{"label": "${longLabel}"}'`);
-  assert.equal(result?.length, 50);
-  assert.ok(result?.endsWith('…'));
+  assert.equal(result?.label?.length, 50);
+  assert.ok(result?.label?.endsWith('…'));
 });
 
-test('runExtraCmd sanitizes output containing escape sequences', async () => {
+test('runExtraCmd truncates long lines with ellipsis', async () => {
+  const longLine = 'b'.repeat(250);
+  const result = await runExtraCmd(`echo '{"lines": ["${longLine}"]}'`);
+  assert.equal(result?.lines[0]?.length, 200);
+  assert.ok(result?.lines[0]?.endsWith('…'));
+});
+
+test('runExtraCmd sanitizes label containing escape sequences', async () => {
   const result = await runExtraCmd('echo \'{"label": "\\u001b[31mRed\\u001b[0m"}\'');
-  assert.equal(result, 'Red');
+  assert.equal(result?.label, 'Red');
+});
+
+test('runExtraCmd sanitizes lines containing escape sequences', async () => {
+  const result = await runExtraCmd('echo \'{"lines": ["\\u001b[31mRed\\u001b[0m"]}\'');
+  assert.deepStrictEqual(result?.lines, ['Red']);
 });
 
 test('runExtraCmd returns null when command fails', async () => {
@@ -165,5 +192,5 @@ test('runExtraCmd handles null JSON', async () => {
 
 test('runExtraCmd handles valid JSON with extra whitespace', async () => {
   const result = await runExtraCmd('echo \'  { "label": "trimmed" }  \'');
-  assert.equal(result, 'trimmed');
+  assert.deepStrictEqual(result, { label: 'trimmed', lines: [] });
 });

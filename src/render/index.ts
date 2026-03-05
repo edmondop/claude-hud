@@ -371,8 +371,12 @@ export function render(ctx: RenderContext): void {
 
   const lines: string[] = [...headerLines];
 
+  if (ctx.extraLines.length > 0) {
+    lines.push(...ctx.extraLines.map(line => dim(line)));
+  }
+
   if (showSeparators && activityLines.length > 0) {
-    const maxWidth = Math.max(...headerLines.map(visualLength), 20);
+    const maxWidth = Math.max(...lines.map(visualLength), 20);
     const separatorWidth = terminalWidth ? Math.min(maxWidth, terminalWidth) : maxWidth;
     lines.push(makeSeparator(separatorWidth));
   }
