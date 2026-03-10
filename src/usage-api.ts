@@ -45,20 +45,69 @@ interface UsageApiResult {
 // File-based cache (HUD runs as new process each render, so in-memory cache won't persist)
 const CACHE_TTL_MS = 60_000; // 60 seconds
 const CACHE_FAILURE_TTL_MS = 15_000; // 15 seconds for failed requests
+const CACHE_LOCK_STALE_MS = 30_000;
+const CACHE_LOCK_WAIT_MS = 2_000;
+const CACHE_LOCK_POLL_MS = 50;
 const KEYCHAIN_TIMEOUT_MS = 3000;
 const KEYCHAIN_BACKOFF_MS = 60_000; // Backoff on keychain failures to avoid re-prompting
 const USAGE_API_TIMEOUT_MS_DEFAULT = 15_000;
+export const USAGE_API_USER_AGENT = 'claude-code/2.1';
+
+/**
+ * Check if user is using a custom API endpoint instead of the default Anthropic API.
+ * When using custom providers (e.g., via cc-switch), the OAuth usage API is not applicable.
+ */
+function isUsingCustomApiEndpoint(env: NodeJS.ProcessEnv = process.env): boolean {
+  const baseUrl = env.ANTHROPIC_BASE_URL?.trim() || env.ANTHROPIC_API_BASE_URL?.trim();
+
+  // No custom endpoint configured - using default Anthropic API
+  if (!baseUrl) {
+    return false;
+  }
+
+  try {
+    return new URL(baseUrl).origin !== 'https://api.anthropic.com';
+  } catch {
+    return true;
+  }
+}
 
 interface CacheFile {
   data: UsageData;
   timestamp: number;
 }
 
+interface CacheState {
+  data: UsageData;
+  timestamp: number;
+  isFresh: boolean;
+}
+
+type CacheLockStatus = 'acquired' | 'busy' | 'unsupported';
+
 function getCachePath(homeDir: string): string {
   return path.join(getHudPluginDir(homeDir), '.usage-cache.json');
 }
 
-function readCache(homeDir: string, now: number): UsageData | null {
+function getCacheLockPath(homeDir: string): string {
+  return path.join(getHudPluginDir(homeDir), '.usage-cache.lock');
+}
+
+function hydrateCacheData(data: UsageData): UsageData {
+  // JSON.stringify converts Date to ISO string, so we need to reconvert on read.
+  // new Date() handles both Date objects and ISO strings safely.
+  if (data.fiveHourResetAt) {
+    data.fiveHourResetAt = new Date(data.fiveHourResetAt);
+  }
+  if (data.sevenDayResetAt) {
+    data.sevenDayResetAt = new Date(data.sevenDayResetAt);
+  }
+  return data;
+}
+
+type CacheTtls = { cacheTtlMs: number; failureCacheTtlMs: number };
+
+function readCacheState(homeDir: string, now: number, ttls: CacheTtls): CacheState | null {
   try {
     const cachePath = getCachePath(homeDir);
     if (!fs.existsSync(cachePath)) return null;
@@ -67,23 +116,20 @@ function readCache(homeDir: string, now: number): UsageData | null {
     const cache: CacheFile = JSON.parse(content);
 
     // Check TTL - use shorter TTL for failure results
-    const ttl = cache.data.apiUnavailable ? CACHE_FAILURE_TTL_MS : CACHE_TTL_MS;
-    if (now - cache.timestamp >= ttl) return null;
-
-    // JSON.stringify converts Date to ISO string, so we need to reconvert on read.
-    // new Date() handles both Date objects and ISO strings safely.
-    const data = cache.data;
-    if (data.fiveHourResetAt) {
-      data.fiveHourResetAt = new Date(data.fiveHourResetAt);
-    }
-    if (data.sevenDayResetAt) {
-      data.sevenDayResetAt = new Date(data.sevenDayResetAt);
-    }
-
-    return data;
+    const ttl = cache.data.apiUnavailable ? ttls.failureCacheTtlMs : ttls.cacheTtlMs;
+    return {
+      data: hydrateCacheData(cache.data),
+      timestamp: cache.timestamp,
+      isFresh: now - cache.timestamp < ttl,
+    };
   } catch {
     return null;
   }
+}
+
+function readCache(homeDir: string, now: number, ttls: CacheTtls): UsageData | null {
+  const cache = readCacheState(homeDir, now, ttls);
+  return cache?.isFresh ? cache.data : null;
 }
 
 function writeCache(homeDir: string, data: UsageData, timestamp: number): void {
@@ -102,12 +148,95 @@ function writeCache(homeDir: string, data: UsageData, timestamp: number): void {
   }
 }
 
+function readLockTimestamp(lockPath: string): number | null {
+  try {
+    if (!fs.existsSync(lockPath)) return null;
+    const raw = fs.readFileSync(lockPath, 'utf8').trim();
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function tryAcquireCacheLock(homeDir: string): CacheLockStatus {
+  const lockPath = getCacheLockPath(homeDir);
+  const cacheDir = path.dirname(lockPath);
+
+  try {
+    if (!fs.existsSync(cacheDir)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
+    }
+
+    const fd = fs.openSync(lockPath, 'wx');
+    try {
+      fs.writeFileSync(fd, String(Date.now()), 'utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
+    return 'acquired';
+  } catch (error) {
+    const maybeError = error as NodeJS.ErrnoException;
+    if (maybeError.code !== 'EEXIST') {
+      debug('Usage cache lock unavailable, continuing without coordination:', maybeError.message);
+      return 'unsupported';
+    }
+  }
+
+  const lockTimestamp = readLockTimestamp(lockPath);
+  if (lockTimestamp != null && Date.now() - lockTimestamp > CACHE_LOCK_STALE_MS) {
+    try {
+      fs.unlinkSync(lockPath);
+    } catch {
+      return 'busy';
+    }
+    return tryAcquireCacheLock(homeDir);
+  }
+
+  return 'busy';
+}
+
+function releaseCacheLock(homeDir: string): void {
+  try {
+    const lockPath = getCacheLockPath(homeDir);
+    if (fs.existsSync(lockPath)) {
+      fs.unlinkSync(lockPath);
+    }
+  } catch {
+    // Ignore lock cleanup failures
+  }
+}
+
+async function waitForFreshCache(
+  homeDir: string,
+  now: () => number,
+  ttls: CacheTtls,
+  timeoutMs: number = CACHE_LOCK_WAIT_MS
+): Promise<UsageData | null> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, CACHE_LOCK_POLL_MS));
+    const cached = readCache(homeDir, now(), ttls);
+    if (cached) {
+      return cached;
+    }
+
+    if (!fs.existsSync(getCacheLockPath(homeDir))) {
+      break;
+    }
+  }
+
+  return readCache(homeDir, now(), ttls);
+}
+
 // Dependency injection for testing
 export type UsageApiDeps = {
   homeDir: () => string;
   fetchApi: (accessToken: string) => Promise<UsageApiResult>;
   now: () => number;
   readKeychain: (now: number, homeDir: string) => { accessToken: string; subscriptionType: string } | null;
+  ttls: CacheTtls;
 };
 
 const defaultDeps: UsageApiDeps = {
@@ -115,6 +244,7 @@ const defaultDeps: UsageApiDeps = {
   fetchApi: fetchUsageApi,
   now: () => Date.now(),
   readKeychain: readKeychainCredentials,
+  ttls: { cacheTtlMs: CACHE_TTL_MS, failureCacheTtlMs: CACHE_FAILURE_TTL_MS },
 };
 
 /**
@@ -123,20 +253,41 @@ const defaultDeps: UsageApiDeps = {
  * Returns { apiUnavailable: true, ... } if API call fails (to show warning in HUD).
  *
  * Uses file-based cache since HUD runs as a new process each render (~300ms).
- * Cache TTL: 60s for success, 15s for failures.
+ * Cache TTL is configurable via usage.cacheTtlSeconds / usage.failureCacheTtlSeconds in config.json
+ * (defaults: 60s for success, 15s for failures).
  */
 export async function getUsage(overrides: Partial<UsageApiDeps> = {}): Promise<UsageData | null> {
   const deps = { ...defaultDeps, ...overrides };
   const now = deps.now();
   const homeDir = deps.homeDir();
 
+  // Skip usage API if user is using a custom provider
+  if (isUsingCustomApiEndpoint()) {
+    debug('Skipping usage API: custom API endpoint configured');
+    return null;
+  }
   // Check file-based cache first
-  const cached = readCache(homeDir, now);
-  if (cached) {
-    return cached;
+  const cacheState = readCacheState(homeDir, now, deps.ttls);
+  if (cacheState?.isFresh) {
+    return cacheState.data;
   }
 
+  let holdsCacheLock = false;
+  const lockStatus = tryAcquireCacheLock(homeDir);
+  if (lockStatus === 'busy') {
+    if (cacheState) {
+      return cacheState.data;
+    }
+    return await waitForFreshCache(homeDir, deps.now, deps.ttls);
+  }
+  holdsCacheLock = lockStatus === 'acquired';
+
   try {
+    const refreshedCache = readCache(homeDir, deps.now(), deps.ttls);
+    if (refreshedCache) {
+      return refreshedCache;
+    }
+
     const credentials = readCredentials(homeDir, now, deps.readKeychain);
     if (!credentials) {
       return null;
@@ -191,6 +342,10 @@ export async function getUsage(overrides: Partial<UsageApiDeps> = {}): Promise<U
   } catch (error) {
     debug('getUsage failed:', error);
     return null;
+  } finally {
+    if (holdsCacheLock) {
+      releaseCacheLock(homeDir);
+    }
   }
 }
 
@@ -662,7 +817,7 @@ function fetchUsageApi(accessToken: string): Promise<UsageApiResult> {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
         'anthropic-beta': 'oauth-2025-04-20',
-        'User-Agent': 'claude-hud/1.0',
+        'User-Agent': USAGE_API_USER_AGENT,
       },
       timeout: timeoutMs,
       agent: proxyUrl ? createProxyTunnelAgent(proxyUrl) : undefined,
@@ -717,6 +872,10 @@ export function clearCache(homeDir?: string): void {
       const cachePath = getCachePath(homeDir);
       if (fs.existsSync(cachePath)) {
         fs.unlinkSync(cachePath);
+      }
+      const lockPath = getCacheLockPath(homeDir);
+      if (fs.existsSync(lockPath)) {
+        fs.unlinkSync(lockPath);
       }
     } catch {
       // Ignore

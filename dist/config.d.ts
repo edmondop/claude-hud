@@ -1,10 +1,13 @@
 export type LineLayoutType = 'compact' | 'expanded';
 export type AutocompactBufferMode = 'enabled' | 'disabled';
 export type ContextValueMode = 'percent' | 'tokens' | 'remaining';
+export type HudElement = 'project' | 'context' | 'usage' | 'environment' | 'tools' | 'agents' | 'todos';
+export declare const DEFAULT_ELEMENT_ORDER: HudElement[];
 export interface HudConfig {
     lineLayout: LineLayoutType;
     showSeparators: boolean;
     pathLevels: 1 | 2 | 3;
+    elementOrder: HudElement[];
     gitStatus: {
         enabled: boolean;
         showDirty: boolean;
@@ -25,10 +28,15 @@ export interface HudConfig {
         showTools: boolean;
         showAgents: boolean;
         showTodos: boolean;
+        showSessionName: boolean;
         autocompactBuffer: AutocompactBufferMode;
         usageThreshold: number;
         sevenDayThreshold: number;
         environmentThreshold: number;
+    };
+    usage: {
+        cacheTtlSeconds: number;
+        failureCacheTtlSeconds: number;
     };
 }
 export declare const DEFAULT_CONFIG: HudConfig;

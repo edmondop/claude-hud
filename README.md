@@ -129,6 +129,7 @@ You can also edit the config file directly at `~/.claude/plugins/claude-hud/conf
 |--------|------|---------|-------------|
 | `lineLayout` | string | `expanded` | Layout: `expanded` (multi-line) or `compact` (single line) |
 | `pathLevels` | 1-3 | 1 | Directory levels to show in project path |
+| `elementOrder` | string[] | `["project","context","usage","environment","tools","agents","todos"]` | Expanded-mode element order. Omit entries to hide them in expanded mode. |
 | `gitStatus.enabled` | boolean | true | Show git branch in HUD |
 | `gitStatus.showDirty` | boolean | true | Show `*` for uncommitted changes |
 | `gitStatus.showAheadBehind` | boolean | false | Show `↑N ↓N` for ahead/behind remote |
@@ -146,6 +147,9 @@ You can also edit the config file directly at `~/.claude/plugins/claude-hud/conf
 | `display.showTools` | boolean | false | Show tools activity line |
 | `display.showAgents` | boolean | false | Show agents activity line |
 | `display.showTodos` | boolean | false | Show todos progress line |
+| `display.showSessionName` | boolean | false | Show session slug or custom title from `/rename` |
+| `usage.cacheTtlSeconds` | number | 60 | How long (seconds) to cache a successful usage API response |
+| `usage.failureCacheTtlSeconds` | number | 15 | How long (seconds) to cache a failed usage API response before retrying |
 
 ### Usage Limits (Pro/Max/Team)
 
@@ -168,6 +172,7 @@ To disable, set `display.showUsage` to `false`.
 - Check `display.showUsage` is not set to `false` in config
 - API users see no usage display (they have pay-per-token, not rate limits)
 - AWS Bedrock models display `Bedrock` and hide usage limits (usage is managed in AWS)
+- Non-default `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_BASE_URL` settings skip usage display, because the Anthropic OAuth usage API may not apply
 - If you are behind a proxy, set `HTTPS_PROXY` (or `HTTP_PROXY`/`ALL_PROXY`) and optional `NO_PROXY`
 - For high-latency environments, increase usage API timeout with `CLAUDE_HUD_USAGE_TIMEOUT_MS` (milliseconds)
 
@@ -177,6 +182,7 @@ To disable, set `display.showUsage` to `false`.
 {
   "lineLayout": "expanded",
   "pathLevels": 2,
+  "elementOrder": ["project", "tools", "context", "usage", "environment", "agents", "todos"],
   "gitStatus": {
     "enabled": true,
     "showDirty": true,
@@ -189,6 +195,10 @@ To disable, set `display.showUsage` to `false`.
     "showTodos": true,
     "showConfigCounts": true,
     "showDuration": true
+  },
+  "usage": {
+    "cacheTtlSeconds": 120,
+    "failureCacheTtlSeconds": 30
   }
 }
 ```

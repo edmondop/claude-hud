@@ -41,16 +41,29 @@ function baseContext() {
       lineLayout: 'compact',
       showSeparators: false,
       pathLevels: 1,
+      elementOrder: ['project', 'context', 'usage', 'environment', 'tools', 'agents', 'todos'],
       gitStatus: { enabled: true, showDirty: true, showAheadBehind: false, showFileStats: false },
-      display: { showModel: true, showContextBar: true, contextValue: 'percent', showConfigCounts: true, showDuration: true, showSpeed: false, showTokenBreakdown: true, showUsage: true, usageBarEnabled: false, showTools: true, showAgents: true, showTodos: true, autocompactBuffer: 'enabled', usageThreshold: 0, sevenDayThreshold: 80, environmentThreshold: 0 },
+      display: { showModel: true, showProject: true, showContextBar: true, contextValue: 'percent', showConfigCounts: true, showDuration: true, showSpeed: false, showTokenBreakdown: true, showUsage: true, usageBarEnabled: false, showTools: true, showAgents: true, showTodos: true, showSessionName: false, autocompactBuffer: 'enabled', usageThreshold: 0, sevenDayThreshold: 80, environmentThreshold: 0 },
     },
   };
 }
 
+function captureRenderLines(ctx) {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = line => logs.push(stripAnsi(line));
+  try {
+    render(ctx);
+  } finally {
+    console.log = originalLog;
+  }
+  return logs;
+}
+
 test('renderSessionLine adds token breakdown when context is high', () => {
   const ctx = baseContext();
-  // For 90%: (tokens + 45000) / 200000 = 0.9 → tokens = 135000
-  ctx.stdin.context_window.current_usage.input_tokens = 135000;
+  // For 90%: (tokens + 33000) / 200000 = 0.9 → tokens = 147000
+  ctx.stdin.context_window.current_usage.input_tokens = 147000;
   const line = renderSessionLine(ctx);
   assert.ok(line.includes('in:'), 'expected token breakdown');
   assert.ok(line.includes('cache:'), 'expected cache breakdown');
@@ -60,22 +73,22 @@ test('renderSessionLine includes duration and formats large tokens', () => {
   const ctx = baseContext();
   ctx.sessionDuration = '1m';
   // Use 1M context, need 85%+ to show breakdown
-  // For 85%: (tokens + 45000) / 1000000 = 0.85 → tokens = 805000
+  // For 85%: (tokens + 165000) / 1000000 = 0.85 → tokens = 685000
   ctx.stdin.context_window.context_window_size = 1000000;
-  ctx.stdin.context_window.current_usage.input_tokens = 805000;
+  ctx.stdin.context_window.current_usage.input_tokens = 685000;
   ctx.stdin.context_window.current_usage.cache_read_input_tokens = 1500;
   const line = renderSessionLine(ctx);
   assert.ok(line.includes('⏱️'));
-  assert.ok(line.includes('805k') || line.includes('805.0k'), 'expected large input token display');
+  assert.ok(line.includes('685k') || line.includes('685.0k'), 'expected large input token display');
   assert.ok(line.includes('2k'), 'expected cache token display');
 });
 
 test('renderSessionLine handles missing input tokens and cache creation usage', () => {
   const ctx = baseContext();
-  // For 90%: (tokens + 45000) / 200000 = 0.9 → tokens = 135000 (all from cache)
+  // For 90%: (tokens + 33000) / 200000 = 0.9 → tokens = 147000 (all from cache)
   ctx.stdin.context_window.context_window_size = 200000;
   ctx.stdin.context_window.current_usage = {
-    cache_creation_input_tokens: 135000,
+    cache_creation_input_tokens: 147000,
   };
   const line = renderSessionLine(ctx);
   assert.ok(line.includes('90%'));
@@ -84,10 +97,10 @@ test('renderSessionLine handles missing input tokens and cache creation usage', 
 
 test('renderSessionLine handles missing cache token fields', () => {
   const ctx = baseContext();
-  // For 90%: (tokens + 45000) / 200000 = 0.9 → tokens = 135000
+  // For 90%: (tokens + 33000) / 200000 = 0.9 → tokens = 147000
   ctx.stdin.context_window.context_window_size = 200000;
   ctx.stdin.context_window.current_usage = {
-    input_tokens: 135000,
+    input_tokens: 147000,
   };
   const line = renderSessionLine(ctx);
   assert.ok(line.includes('cache: 0'));
@@ -149,7 +162,7 @@ test('renderSessionLine supports remaining-based context display', () => {
   ctx.stdin.context_window.context_window_size = 200000;
   ctx.stdin.context_window.current_usage.input_tokens = 12345;
   const line = renderSessionLine(ctx);
-  assert.ok(line.includes('71%'), 'should include remaining percentage');
+  assert.ok(line.includes('77%'), 'should include remaining percentage');
 });
 
 test('render expanded layout supports remaining-based context display', () => {
@@ -168,7 +181,7 @@ test('render expanded layout supports remaining-based context display', () => {
     console.log = originalLog;
   }
 
-  assert.ok(logs.some(line => line.includes('Context') && line.includes('71%')), 'expected remaining percentage on context line');
+  assert.ok(logs.some(line => line.includes('Context') && line.includes('77%')), 'expected remaining percentage on context line');
 });
 
 test('renderSessionLine omits project name when cwd is undefined', () => {
@@ -178,20 +191,38 @@ test('renderSessionLine omits project name when cwd is undefined', () => {
   assert.ok(line.includes('[Opus]'));
 });
 
-test('renderSessionLine includes session name when present', () => {
+test('renderSessionLine includes session name when showSessionName is true', () => {
   const ctx = baseContext();
   ctx.stdin.cwd = '/tmp/my-project';
   ctx.transcript.sessionName = 'Renamed Session';
+  ctx.config.display.showSessionName = true;
   const line = renderSessionLine(ctx);
   assert.ok(line.includes('Renamed Session'));
 });
 
-test('renderProjectLine includes session name when present', () => {
+test('renderSessionLine hides session name by default', () => {
+  const ctx = baseContext();
+  ctx.stdin.cwd = '/tmp/my-project';
+  ctx.transcript.sessionName = 'Renamed Session';
+  const line = renderSessionLine(ctx);
+  assert.ok(!line.includes('Renamed Session'));
+});
+
+test('renderProjectLine includes session name when showSessionName is true', () => {
+  const ctx = baseContext();
+  ctx.stdin.cwd = '/tmp/my-project';
+  ctx.transcript.sessionName = 'Renamed Session';
+  ctx.config.display.showSessionName = true;
+  const line = renderProjectLine(ctx);
+  assert.ok(line?.includes('Renamed Session'));
+});
+
+test('renderProjectLine hides session name by default', () => {
   const ctx = baseContext();
   ctx.stdin.cwd = '/tmp/my-project';
   ctx.transcript.sessionName = 'Renamed Session';
   const line = renderProjectLine(ctx);
-  assert.ok(line?.includes('Renamed Session'));
+  assert.ok(!line?.includes('Renamed Session'));
 });
 
 test('renderSessionLine omits project name when showProject is false', () => {
@@ -704,12 +735,12 @@ test('renderSessionLine hides usage when showUsage config is false (hybrid toggl
 
 test('renderSessionLine uses buffered percent when autocompactBuffer is enabled', () => {
   const ctx = baseContext();
-  // 10000 tokens / 200000 = 5% raw, + 22.5% buffer = 28% buffered (rounded)
+  // 10000 tokens / 200000 = 5% raw, + 16.5% buffer = 22% buffered (rounded)
   ctx.stdin.context_window.current_usage.input_tokens = 10000;
   ctx.config.display.autocompactBuffer = 'enabled';
   const line = renderSessionLine(ctx);
-  // Should show ~28% (buffered), not 5% (raw)
-  assert.ok(line.includes('28%'), `expected buffered percent 28%, got: ${line}`);
+  // Should show ~22% (buffered), not 5% (raw)
+  assert.ok(line.includes('22%'), `expected buffered percent 22%, got: ${line}`);
 });
 
 test('renderSessionLine uses raw percent when autocompactBuffer is disabled', () => {
@@ -718,7 +749,7 @@ test('renderSessionLine uses raw percent when autocompactBuffer is disabled', ()
   ctx.stdin.context_window.current_usage.input_tokens = 10000;
   ctx.config.display.autocompactBuffer = 'disabled';
   const line = renderSessionLine(ctx);
-  // Should show 5% (raw), not 28% (buffered)
+  // Should show 5% (raw), not 22% (buffered)
   assert.ok(line.includes('5%'), `expected raw percent 5%, got: ${line}`);
 });
 
@@ -851,4 +882,142 @@ test('renderSessionLine combines showFileStats with showDirty and showAheadBehin
   assert.ok(line.includes('↓1'), 'expected behind count');
   assert.ok(line.includes('!3'), 'expected modified count');
   assert.ok(line.includes('✘1'), 'expected deleted count');
+});
+
+test('render expanded layout honors custom elementOrder including activity placement', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'expanded';
+  ctx.stdin.cwd = '/tmp/my-project';
+  ctx.usageData = {
+    planName: 'Team',
+    fiveHour: 30,
+    sevenDay: 10,
+    fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayResetAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  };
+  ctx.claudeMdCount = 1;
+  ctx.rulesCount = 2;
+  ctx.transcript.tools = [
+    { id: 'tool-1', name: 'Read', status: 'completed', startTime: new Date(0), endTime: new Date(0), duration: 0 },
+  ];
+  ctx.transcript.agents = [
+    { id: 'agent-1', type: 'planner', status: 'running', startTime: new Date(0) },
+  ];
+  ctx.transcript.todos = [
+    { content: 'todo-marker', status: 'in_progress' },
+  ];
+  ctx.config.elementOrder = ['tools', 'project', 'usage', 'context', 'environment', 'agents', 'todos'];
+
+  const lines = captureRenderLines(ctx);
+  const toolIndex = lines.findIndex(line => line.includes('Read'));
+  const projectIndex = lines.findIndex(line => line.includes('my-project'));
+  const combinedIndex = lines.findIndex(line => line.includes('Usage') && line.includes('Context'));
+  const environmentIndex = lines.findIndex(line => line.includes('CLAUDE.md'));
+  const agentIndex = lines.findIndex(line => line.includes('planner'));
+  const todoIndex = lines.findIndex(line => line.includes('todo-marker'));
+
+  assert.deepEqual(
+    [toolIndex, projectIndex, combinedIndex, environmentIndex, agentIndex, todoIndex].every(index => index >= 0),
+    true,
+    'expected all configured elements to render'
+  );
+  assert.ok(toolIndex < projectIndex, 'tool line should move ahead of project');
+  assert.ok(projectIndex < combinedIndex, 'combined usage/context line should follow project');
+  assert.ok(combinedIndex < environmentIndex, 'environment line should follow context/usage');
+  assert.ok(environmentIndex < agentIndex, 'agent line should follow environment');
+  assert.ok(agentIndex < todoIndex, 'todo line should follow agent line');
+});
+
+test('render expanded layout omits elements not present in elementOrder', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'expanded';
+  ctx.stdin.cwd = '/tmp/my-project';
+  ctx.usageData = {
+    planName: 'Team',
+    fiveHour: 30,
+    sevenDay: 10,
+    fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayResetAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  };
+  ctx.claudeMdCount = 1;
+  ctx.transcript.tools = [
+    { id: 'tool-1', name: 'Read', status: 'completed', startTime: new Date(0), endTime: new Date(0), duration: 0 },
+  ];
+  ctx.transcript.agents = [
+    { id: 'agent-1', type: 'planner', status: 'running', startTime: new Date(0) },
+  ];
+  ctx.transcript.todos = [
+    { content: 'todo-marker', status: 'in_progress' },
+  ];
+  ctx.config.elementOrder = ['project', 'tools'];
+
+  const output = captureRenderLines(ctx).join('\n');
+
+  assert.ok(output.includes('my-project'), 'project should render when included');
+  assert.ok(output.includes('Read'), 'tools should render when included');
+  assert.ok(!output.includes('Context'), 'context should be omitted when excluded');
+  assert.ok(!output.includes('Usage'), 'usage should be omitted when excluded');
+  assert.ok(!output.includes('CLAUDE.md'), 'environment should be omitted when excluded');
+  assert.ok(!output.includes('planner'), 'agents should be omitted when excluded');
+  assert.ok(!output.includes('todo-marker'), 'todos should be omitted when excluded');
+});
+
+test('render expanded layout combines usage and context when adjacent in elementOrder', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'expanded';
+  ctx.usageData = {
+    planName: 'Team',
+    fiveHour: 30,
+    sevenDay: 10,
+    fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayResetAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  };
+  ctx.config.elementOrder = ['usage', 'context'];
+
+  const lines = captureRenderLines(ctx);
+
+  assert.equal(lines.length, 1, 'adjacent usage and context should share one expanded line');
+  assert.ok(lines[0].includes('Usage'), 'combined line should include usage');
+  assert.ok(lines[0].includes('Context'), 'combined line should include context');
+  assert.ok(lines[0].includes('│'), 'combined line should preserve the shared separator');
+});
+
+test('render expanded layout keeps usage and context separate when not adjacent', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'expanded';
+  ctx.stdin.cwd = '/tmp/my-project';
+  ctx.usageData = {
+    planName: 'Team',
+    fiveHour: 30,
+    sevenDay: 10,
+    fiveHourResetAt: new Date(Date.now() + 60 * 60 * 1000),
+    sevenDayResetAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  };
+  ctx.config.elementOrder = ['usage', 'project', 'context'];
+
+  const lines = captureRenderLines(ctx);
+  const usageLine = lines.find(line => line.includes('Usage'));
+  const contextLine = lines.find(line => line.includes('Context'));
+  const combinedLine = lines.find(line => line.includes('Usage') && line.includes('Context'));
+
+  assert.ok(usageLine, 'usage should render on its own line');
+  assert.ok(contextLine, 'context should render on its own line');
+  assert.equal(combinedLine, undefined, 'usage and context should not combine when separated by another element');
+});
+
+test('render compact layout keeps activity lines even when elementOrder omits them', () => {
+  const ctx = baseContext();
+  ctx.stdin.cwd = '/tmp/my-project';
+  ctx.transcript.tools = [
+    { id: 'tool-1', name: 'Read', status: 'completed', startTime: new Date(0), endTime: new Date(0), duration: 0 },
+  ];
+  ctx.transcript.todos = [
+    { content: 'todo-marker', status: 'in_progress' },
+  ];
+  ctx.config.elementOrder = ['project'];
+
+  const output = captureRenderLines(ctx).join('\n');
+
+  assert.ok(output.includes('Read'), 'compact mode should keep tools visible');
+  assert.ok(output.includes('todo-marker'), 'compact mode should keep todos visible');
 });

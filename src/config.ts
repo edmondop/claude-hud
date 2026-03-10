@@ -7,11 +7,25 @@ export type LineLayoutType = 'compact' | 'expanded';
 
 export type AutocompactBufferMode = 'enabled' | 'disabled';
 export type ContextValueMode = 'percent' | 'tokens' | 'remaining';
+export type HudElement = 'project' | 'context' | 'usage' | 'environment' | 'tools' | 'agents' | 'todos';
+
+export const DEFAULT_ELEMENT_ORDER: HudElement[] = [
+  'project',
+  'context',
+  'usage',
+  'environment',
+  'tools',
+  'agents',
+  'todos',
+];
+
+const KNOWN_ELEMENTS = new Set<HudElement>(DEFAULT_ELEMENT_ORDER);
 
 export interface HudConfig {
   lineLayout: LineLayoutType;
   showSeparators: boolean;
   pathLevels: 1 | 2 | 3;
+  elementOrder: HudElement[];
   gitStatus: {
     enabled: boolean;
     showDirty: boolean;
@@ -32,10 +46,15 @@ export interface HudConfig {
     showTools: boolean;
     showAgents: boolean;
     showTodos: boolean;
+    showSessionName: boolean;
     autocompactBuffer: AutocompactBufferMode;
     usageThreshold: number;
     sevenDayThreshold: number;
     environmentThreshold: number;
+  };
+  usage: {
+    cacheTtlSeconds: number;
+    failureCacheTtlSeconds: number;
   };
 }
 
@@ -43,6 +62,7 @@ export const DEFAULT_CONFIG: HudConfig = {
   lineLayout: 'expanded',
   showSeparators: false,
   pathLevels: 1,
+  elementOrder: [...DEFAULT_ELEMENT_ORDER],
   gitStatus: {
     enabled: true,
     showDirty: true,
@@ -63,10 +83,15 @@ export const DEFAULT_CONFIG: HudConfig = {
     showTools: false,
     showAgents: false,
     showTodos: false,
+    showSessionName: false,
     autocompactBuffer: 'enabled',
     usageThreshold: 0,
     sevenDayThreshold: 80,
     environmentThreshold: 0,
+  },
+  usage: {
+    cacheTtlSeconds: 60,
+    failureCacheTtlSeconds: 15,
   },
 };
 
@@ -89,6 +114,31 @@ function validateAutocompactBuffer(value: unknown): value is AutocompactBufferMo
 
 function validateContextValue(value: unknown): value is ContextValueMode {
   return value === 'percent' || value === 'tokens' || value === 'remaining';
+}
+
+function validateElementOrder(value: unknown): HudElement[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    return [...DEFAULT_ELEMENT_ORDER];
+  }
+
+  const seen = new Set<HudElement>();
+  const elementOrder: HudElement[] = [];
+
+  for (const item of value) {
+    if (typeof item !== 'string' || !KNOWN_ELEMENTS.has(item as HudElement)) {
+      continue;
+    }
+
+    const element = item as HudElement;
+    if (seen.has(element)) {
+      continue;
+    }
+
+    seen.add(element);
+    elementOrder.push(element);
+  }
+
+  return elementOrder.length > 0 ? elementOrder : [...DEFAULT_ELEMENT_ORDER];
 }
 
 interface LegacyConfig {
@@ -126,6 +176,11 @@ function validateThreshold(value: unknown, max = 100): number {
   return Math.max(0, Math.min(max, value));
 }
 
+function validatePositiveInt(value: unknown, defaultValue: number): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) return defaultValue;
+  return value;
+}
+
 export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
   const migrated = migrateConfig(userConfig);
 
@@ -140,6 +195,8 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
   const pathLevels = validatePathLevels(migrated.pathLevels)
     ? migrated.pathLevels
     : DEFAULT_CONFIG.pathLevels;
+
+  const elementOrder = validateElementOrder(migrated.elementOrder);
 
   const gitStatus = {
     enabled: typeof migrated.gitStatus?.enabled === 'boolean'
@@ -196,6 +253,9 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
     showTodos: typeof migrated.display?.showTodos === 'boolean'
       ? migrated.display.showTodos
       : DEFAULT_CONFIG.display.showTodos,
+    showSessionName: typeof migrated.display?.showSessionName === 'boolean'
+      ? migrated.display.showSessionName
+      : DEFAULT_CONFIG.display.showSessionName,
     autocompactBuffer: validateAutocompactBuffer(migrated.display?.autocompactBuffer)
       ? migrated.display.autocompactBuffer
       : DEFAULT_CONFIG.display.autocompactBuffer,
@@ -204,7 +264,18 @@ export function mergeConfig(userConfig: Partial<HudConfig>): HudConfig {
     environmentThreshold: validateThreshold(migrated.display?.environmentThreshold, 100),
   };
 
-  return { lineLayout, showSeparators, pathLevels, gitStatus, display };
+  const usage = {
+    cacheTtlSeconds: validatePositiveInt(
+      migrated.usage?.cacheTtlSeconds,
+      DEFAULT_CONFIG.usage.cacheTtlSeconds
+    ),
+    failureCacheTtlSeconds: validatePositiveInt(
+      migrated.usage?.failureCacheTtlSeconds,
+      DEFAULT_CONFIG.usage.failureCacheTtlSeconds
+    ),
+  };
+
+  return { lineLayout, showSeparators, pathLevels, elementOrder, gitStatus, display, usage };
 }
 
 export async function loadConfig(): Promise<HudConfig> {

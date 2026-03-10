@@ -2,10 +2,21 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { getHudPluginDir } from './claude-config-dir.js';
+export const DEFAULT_ELEMENT_ORDER = [
+    'project',
+    'context',
+    'usage',
+    'environment',
+    'tools',
+    'agents',
+    'todos',
+];
+const KNOWN_ELEMENTS = new Set(DEFAULT_ELEMENT_ORDER);
 export const DEFAULT_CONFIG = {
     lineLayout: 'expanded',
     showSeparators: false,
     pathLevels: 1,
+    elementOrder: [...DEFAULT_ELEMENT_ORDER],
     gitStatus: {
         enabled: true,
         showDirty: true,
@@ -26,10 +37,15 @@ export const DEFAULT_CONFIG = {
         showTools: false,
         showAgents: false,
         showTodos: false,
+        showSessionName: false,
         autocompactBuffer: 'enabled',
         usageThreshold: 0,
         sevenDayThreshold: 80,
         environmentThreshold: 0,
+    },
+    usage: {
+        cacheTtlSeconds: 60,
+        failureCacheTtlSeconds: 15,
     },
 };
 export function getConfigPath() {
@@ -47,6 +63,25 @@ function validateAutocompactBuffer(value) {
 }
 function validateContextValue(value) {
     return value === 'percent' || value === 'tokens' || value === 'remaining';
+}
+function validateElementOrder(value) {
+    if (!Array.isArray(value) || value.length === 0) {
+        return [...DEFAULT_ELEMENT_ORDER];
+    }
+    const seen = new Set();
+    const elementOrder = [];
+    for (const item of value) {
+        if (typeof item !== 'string' || !KNOWN_ELEMENTS.has(item)) {
+            continue;
+        }
+        const element = item;
+        if (seen.has(element)) {
+            continue;
+        }
+        seen.add(element);
+        elementOrder.push(element);
+    }
+    return elementOrder.length > 0 ? elementOrder : [...DEFAULT_ELEMENT_ORDER];
 }
 function migrateConfig(userConfig) {
     const migrated = { ...userConfig };
@@ -81,6 +116,11 @@ function validateThreshold(value, max = 100) {
         return 0;
     return Math.max(0, Math.min(max, value));
 }
+function validatePositiveInt(value, defaultValue) {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0)
+        return defaultValue;
+    return value;
+}
 export function mergeConfig(userConfig) {
     const migrated = migrateConfig(userConfig);
     const lineLayout = validateLineLayout(migrated.lineLayout)
@@ -92,6 +132,7 @@ export function mergeConfig(userConfig) {
     const pathLevels = validatePathLevels(migrated.pathLevels)
         ? migrated.pathLevels
         : DEFAULT_CONFIG.pathLevels;
+    const elementOrder = validateElementOrder(migrated.elementOrder);
     const gitStatus = {
         enabled: typeof migrated.gitStatus?.enabled === 'boolean'
             ? migrated.gitStatus.enabled
@@ -146,6 +187,9 @@ export function mergeConfig(userConfig) {
         showTodos: typeof migrated.display?.showTodos === 'boolean'
             ? migrated.display.showTodos
             : DEFAULT_CONFIG.display.showTodos,
+        showSessionName: typeof migrated.display?.showSessionName === 'boolean'
+            ? migrated.display.showSessionName
+            : DEFAULT_CONFIG.display.showSessionName,
         autocompactBuffer: validateAutocompactBuffer(migrated.display?.autocompactBuffer)
             ? migrated.display.autocompactBuffer
             : DEFAULT_CONFIG.display.autocompactBuffer,
@@ -153,7 +197,11 @@ export function mergeConfig(userConfig) {
         sevenDayThreshold: validateThreshold(migrated.display?.sevenDayThreshold, 100),
         environmentThreshold: validateThreshold(migrated.display?.environmentThreshold, 100),
     };
-    return { lineLayout, showSeparators, pathLevels, gitStatus, display };
+    const usage = {
+        cacheTtlSeconds: validatePositiveInt(migrated.usage?.cacheTtlSeconds, DEFAULT_CONFIG.usage.cacheTtlSeconds),
+        failureCacheTtlSeconds: validatePositiveInt(migrated.usage?.failureCacheTtlSeconds, DEFAULT_CONFIG.usage.failureCacheTtlSeconds),
+    };
+    return { lineLayout, showSeparators, pathLevels, elementOrder, gitStatus, display, usage };
 }
 export async function loadConfig() {
     const configPath = getConfigPath();
