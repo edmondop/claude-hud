@@ -4,7 +4,7 @@ import { renderToolsLine } from './tools-line.js';
 import { renderAgentsLine } from './agents-line.js';
 import { renderTodosLine } from './todos-line.js';
 import { renderIdentityLine, renderProjectLine, renderEnvironmentLine, renderUsageLine, } from './lines/index.js';
-import { dim, RESET } from './colors.js';
+import { cyan, dim, RESET } from './colors.js';
 // eslint-disable-next-line no-control-regex
 const ANSI_ESCAPE_PATTERN = /^\x1b\[[0-9;]*m/;
 const ANSI_ESCAPE_GLOBAL = /\x1b\[[0-9;]*m/g;
@@ -361,7 +361,7 @@ export function render(ctx) {
         const activityLines = collectActivityLines(ctx);
         lines = [...headerLines];
         if (ctx.extraLines.length > 0) {
-            lines.push(...ctx.extraLines.map(line => dim(line)));
+            lines.push(...ctx.extraLines.map(line => cyan(line)));
         }
         if (showSeparators && activityLines.length > 0) {
             const maxWidth = Math.max(...lines.map(visualLength), 20);

@@ -46,7 +46,7 @@ export async function main(overrides = {}) {
             })
             : null;
         const extraCmd = deps.parseExtraCmdArg();
-        const extraResult = extraCmd ? await deps.runExtraCmd(extraCmd) : null;
+        const extraResult = extraCmd ? await deps.runExtraCmd(extraCmd, undefined, stdin.cwd) : null;
         const sessionDuration = formatSessionDuration(transcript.sessionStart, deps.now);
         const ctx = {
             stdin,

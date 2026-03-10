@@ -127,11 +127,12 @@ function parseExtraCmdOutput(data: unknown): ExtraCmdResult | null {
  * (--extra-cmd) typed by the user. Since the user controls their own shell,
  * shell injection is not a concern here - it's intentional user input.
  */
-export async function runExtraCmd(cmd: string, timeout: number = TIMEOUT_MS): Promise<ExtraCmdResult | null> {
+export async function runExtraCmd(cmd: string, timeout: number = TIMEOUT_MS, cwd?: string): Promise<ExtraCmdResult | null> {
   try {
     const { stdout } = await execAsync(cmd, {
       timeout,
       maxBuffer: MAX_BUFFER,
+      ...(cwd ? { cwd } : {}),
     });
     return parseExtraCmdOutput(JSON.parse(stdout.trim()));
   } catch (err) {

@@ -24,5 +24,5 @@ export declare function parseExtraCmdArg(argv?: string[]): string | null;
  * (--extra-cmd) typed by the user. Since the user controls their own shell,
  * shell injection is not a concern here - it's intentional user input.
  */
-export declare function runExtraCmd(cmd: string, timeout?: number): Promise<ExtraCmdResult | null>;
+export declare function runExtraCmd(cmd: string, timeout?: number, cwd?: string): Promise<ExtraCmdResult | null>;
 //# sourceMappingURL=extra-cmd.d.ts.map

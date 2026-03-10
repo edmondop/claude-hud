@@ -11,7 +11,7 @@ import {
   renderEnvironmentLine,
   renderUsageLine,
 } from './lines/index.js';
-import { dim, RESET } from './colors.js';
+import { cyan, dim, RESET } from './colors.js';
 
 // eslint-disable-next-line no-control-regex
 const ANSI_ESCAPE_PATTERN = /^\x1b\[[0-9;]*m/;
@@ -440,7 +440,7 @@ export function render(ctx: RenderContext): void {
     lines = [...headerLines];
 
     if (ctx.extraLines.length > 0) {
-      lines.push(...ctx.extraLines.map(line => dim(line)));
+      lines.push(...ctx.extraLines.map(line => cyan(line)));
     }
 
     if (showSeparators && activityLines.length > 0) {
