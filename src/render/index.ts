@@ -419,6 +419,10 @@ export function render(ctx: RenderContext): void {
     const renderedLines = renderExpanded(ctx);
     lines = renderedLines.map(({ line }) => line);
 
+    if (ctx.extraLines.length > 0) {
+      lines.push(...ctx.extraLines.map(line => cyan(line)));
+    }
+
     if (showSeparators) {
       const firstActivityIndex = renderedLines.findIndex(({ isActivity }) => isActivity);
       if (firstActivityIndex > 0) {
