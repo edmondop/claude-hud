@@ -6,7 +6,7 @@ export declare const DEFAULT_ELEMENT_ORDER: HudElement[];
 export interface HudConfig {
     lineLayout: LineLayoutType;
     showSeparators: boolean;
-    pathLevels: 1 | 2 | 3;
+    pathLevels: 0 | 1 | 2 | 3;
     elementOrder: HudElement[];
     gitStatus: {
         enabled: boolean;
