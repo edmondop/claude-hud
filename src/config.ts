@@ -24,7 +24,7 @@ const KNOWN_ELEMENTS = new Set<HudElement>(DEFAULT_ELEMENT_ORDER);
 export interface HudConfig {
   lineLayout: LineLayoutType;
   showSeparators: boolean;
-  pathLevels: 1 | 2 | 3;
+  pathLevels: 0 | 1 | 2 | 3;
   elementOrder: HudElement[];
   gitStatus: {
     enabled: boolean;
@@ -100,8 +100,8 @@ export function getConfigPath(): string {
   return path.join(getHudPluginDir(homeDir), 'config.json');
 }
 
-function validatePathLevels(value: unknown): value is 1 | 2 | 3 {
-  return value === 1 || value === 2 || value === 3;
+function validatePathLevels(value: unknown): value is 0 | 1 | 2 | 3 {
+  return value === 0 || value === 1 || value === 2 || value === 3;
 }
 
 function validateLineLayout(value: unknown): value is LineLayoutType {

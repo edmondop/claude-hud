@@ -53,7 +53,7 @@ export function getConfigPath() {
     return path.join(getHudPluginDir(homeDir), 'config.json');
 }
 function validatePathLevels(value) {
-    return value === 1 || value === 2 || value === 3;
+    return value === 0 || value === 1 || value === 2 || value === 3;
 }
 function validateLineLayout(value) {
     return value === 'compact' || value === 'expanded';
