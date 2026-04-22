@@ -3,6 +3,31 @@ import { getContextPercent, getBufferedPercent, getModelName, getProviderLabel, 
 import { getOutputSpeed } from '../speed-tracker.js';
 import { coloredBar, cyan, dim, magenta, red, yellow, getContextColor, quotaBar, RESET } from './colors.js';
 const DEBUG = process.env.DEBUG?.includes('claude-hud') || process.env.DEBUG === '*';
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+function getTerminalWidth() {
+    const cols = process.stdout?.columns;
+    if (typeof cols === 'number' && Number.isFinite(cols) && cols > 0) {
+        return Math.floor(cols);
+    }
+    const envCols = Number.parseInt(process.env.COLUMNS ?? '', 10);
+    if (Number.isFinite(envCols) && envCols > 0) {
+        return envCols;
+    }
+    return null;
+}
+function visualWidth(str) {
+    return str.replace(ANSI_RE, '').length;
+}
+function truncatePathLeft(path, maxWidth) {
+    if (maxWidth <= 0)
+        return '';
+    if (path.length <= maxWidth)
+        return path;
+    if (maxWidth <= 1)
+        return '\u2026';
+    return '\u2026' + path.slice(-(maxWidth - 1));
+}
 /**
  * Renders the full session line (model + context bar + project + git + counts + usage + duration).
  * Used for compact layout mode.
@@ -44,15 +69,15 @@ export function renderSessionLine(ctx) {
         parts.push(contextValueDisplay);
     }
     // Project path + git status (SECOND)
+    // Path is truncated from the left to fit available terminal width.
+    // We use a placeholder here and replace it after calculating remaining space.
+    const PATH_PLACEHOLDER = '\x00PATH\x00';
     let projectPart = null;
+    let rawProjectPath = '';
     if (display?.showProject !== false && ctx.stdin.cwd) {
-        // Split by both Unix (/) and Windows (\) separators for cross-platform support
         const segments = ctx.stdin.cwd.split(/[/\\]/).filter(Boolean);
-        const pathLevels = ctx.config?.pathLevels ?? 1;
-        // Always join with forward slash for consistent display
-        // Handle root path (/) which results in empty segments
-        const projectPath = segments.length > 0 ? segments.slice(-pathLevels).join('/') : '/';
-        projectPart = yellow(projectPath);
+        rawProjectPath = segments.length > 0 ? segments.join('/') : '/';
+        projectPart = PATH_PLACEHOLDER;
     }
     let gitPart = '';
     const gitConfig = ctx.config?.gitStatus;
@@ -188,6 +213,30 @@ export function renderSessionLine(ctx) {
             const input = formatTokens(usage.input_tokens ?? 0);
             const cache = formatTokens((usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0));
             line += dim(` (in: ${input}, cache: ${cache})`);
+        }
+    }
+    // Replace path placeholder with left-truncated path that fits available space
+    if (rawProjectPath && line.includes(PATH_PLACEHOLDER)) {
+        const terminalWidth = getTerminalWidth();
+        if (terminalWidth) {
+            const lineWithoutPath = line.replace(PATH_PLACEHOLDER, '');
+            const usedWidth = visualWidth(lineWithoutPath);
+            const available = terminalWidth - usedWidth;
+            const fitted = truncatePathLeft(rawProjectPath, available);
+            if (fitted) {
+                line = line.replace(PATH_PLACEHOLDER, yellow(fitted));
+            }
+            else {
+                // Path didn't fit at all — remove placeholder and trailing space before git
+                line = line.replace(PATH_PLACEHOLDER + ' ', '').replace(PATH_PLACEHOLDER, '');
+            }
+        }
+        else {
+            // No terminal width — fall back to pathLevels behavior
+            const segments = rawProjectPath.split('/').filter(Boolean);
+            const pathLevels = ctx.config?.pathLevels ?? 1;
+            const fallback = segments.length > 0 ? segments.slice(-pathLevels).join('/') : '/';
+            line = line.replace(PATH_PLACEHOLDER, yellow(fallback));
         }
     }
     return line;
